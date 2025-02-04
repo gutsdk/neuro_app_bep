@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+﻿using Newtonsoft.Json;
 
 namespace neuro_app_bep
 {
@@ -14,8 +14,11 @@ namespace neuro_app_bep
         public double[] _biases1;
         public double[] _biases2;
 
+        [JsonIgnore]
         public double[] _hiddenInput;
+        [JsonIgnore]
         public double[] _hiddenOutput;
+        [JsonIgnore]
         public double[] _outputInput;
 
         public void Initialize(int inputSize, int hiddenSize, int outputSize, double learningRate)

@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:neuro_app_bep"
         xmlns:oxy="http://oxyplot.org/wpf" x:Class="neuro_app_bep.MainWindow"
         mc:Ignorable="d"
-        Title="Метод обратного распространения ошибок" Height="620" Width="800" FontFamily="GOST type AU">
+        Title="Метод обратного распространения ошибок" Height="620" Width="800" FontFamily="GOST type A">
     <Canvas>
         <Label Content="Попытка в нейросети #1?" FontSize="20" Height="30" Width="200" Canvas.Left="20" Canvas.Top="10"/>
         <Label Content="Выбранное изображение" FontSize="20" Height="30" Width="200" Canvas.Left="79" Canvas.Top="544"/>

@@ -1,3 +1,5 @@
 Solution/bin
 Solution/obj
 Dataset/*.gz
+.vs
+Solution/.vs

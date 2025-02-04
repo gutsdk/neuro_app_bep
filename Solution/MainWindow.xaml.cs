@@ -3,9 +3,10 @@ using OxyPlot;
 using OxyPlot.Axes;
 using OxyPlot.Series;
 using System.IO;
-using System.Text.Json;
 using System.Windows;
 using System.Windows.Media.Imaging;
+using Newtonsoft.Json;
+using System.Drawing;
 
 namespace neuro_app_bep
 {
@@ -88,6 +89,8 @@ namespace neuro_app_bep
             {
                 var bitmap = new BitmapImage(new Uri(openFileDialog.FileName));
                 PickedImage.Source = bitmap;
+
+                var processedImage = ProcessImage(bitmap, 28);
             }
         }
 
@@ -104,7 +107,7 @@ namespace neuro_app_bep
                 try
                 {
                     string json = File.ReadAllText(openFileDialog.FileName);
-                    _neuralNetwork = JsonSerializer.Deserialize<NeuralNetwork>(json);
+                    _neuralNetwork = JsonConvert.DeserializeObject<NeuralNetwork>(json);
 
                     ModelStatus.Content = "Модель загружена";
                     MessageBox.Show("Модель успешно загружена!", "Успех",
@@ -137,8 +140,7 @@ namespace neuro_app_bep
             {
                 try
                 {
-                    var options = new JsonSerializerOptions { WriteIndented = true }; // Красивый JSON
-                    string json = JsonSerializer.Serialize(_neuralNetwork, options);
+                    string json = JsonConvert.SerializeObject(_neuralNetwork);
                     File.WriteAllText(saveFileDialog.FileName, json);
 
                     MessageBox.Show("Модель успешно сохранена!", "Успех",
@@ -219,6 +221,33 @@ namespace neuro_app_bep
             {
                 MessageBox.Show(ex.ToString());
             }
+        }
+
+        private double[] ProcessImage(BitmapImage image, int resizeValue)
+        {
+            var greyPixels = new byte[resizeValue * resizeValue];
+
+            using (var memoryStream = new MemoryStream())
+            {
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(image));
+                encoder.Save(memoryStream);
+
+                using (var bmp = new Bitmap(memoryStream))
+                using (var resized = new Bitmap(bmp, new System.Drawing.Size(resizeValue, resizeValue)))
+                {
+                    for (int y = 0; y < resizeValue; y++)
+                    {
+                        for (int x = 0; x < resizeValue; x++)
+                        {
+                            var pixel = resized.GetPixel(x, y);
+                            greyPixels[y * resizeValue + x] = (byte)(0.299*pixel.R + 0.587*pixel.G + 0.114*pixel.B); // формула rgb to grayscale весовое среднее
+                        }
+                    }
+                }
+            }
+
+            return greyPixels.Select(x => 1.0 - (x / 255.0)).ToArray();
         }
 
         private void UpdatePlot()
