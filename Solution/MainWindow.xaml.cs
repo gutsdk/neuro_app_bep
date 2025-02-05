@@ -7,18 +7,26 @@ using System.Windows;
 using System.Windows.Media.Imaging;
 using Newtonsoft.Json;
 using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace neuro_app_bep
 {
     public partial class MainWindow : Window
     {
-        private PlotModel _plotModel;
+        private readonly Logger _logger;
+        private CancellationTokenSource _trainingCts;
+        private readonly object _syncLock = new object();
         private NeuralNetwork _neuralNetwork;
         private TrainingProgress _progress = new TrainingProgress();
+        private PlotModel _plotModel;
+
         public MainWindow()
         {
             InitializeComponent();
             InitializePlot();
+            _logger = new Logger("training.log");
+            Closing += (s, e) => _trainingCts?.Cancel();
         }
 
         private void InitializePlot()
@@ -68,20 +76,31 @@ namespace neuro_app_bep
 
         private async void Start_Click(object sender, RoutedEventArgs e)
         {
-            Start.IsEnabled = false;
-            ModelStatus.Content = "Обучение...";
+            try
+            {
+                Start.IsEnabled = false;
+                _trainingCts = new CancellationTokenSource();
 
-            await Task.Run(() => TrainModel());
-
-            ModelStatus.Content = "Обучение завершено";
-            Start.IsEnabled = true;
+                await TrainModelAsync(_trainingCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.Warning("Обучение прервано пользователем");
+                UpdateStatus("Обучение прервано");
+            }
+            finally
+            {
+                Start.IsEnabled = true;
+            }
         }
 
         private void PickImage_Click(object sender, RoutedEventArgs e)
         {
             var openFileDialog = new OpenFileDialog
             {
-                Filter = "PNG Files (*.png)|*.png|All files (*.*)|*.*",
+                Filter = "PNG Files (*.png)|*.png|" + "JPG Files (*.jpg)|*.jpg|" +
+                    "TIFF Files (*.tiff)|*.tiff|" + "BMP Files (*.bmp)|*.bmp|" + 
+                    "All files (*.*)|*.*",
                 InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures)
             };
 
@@ -95,10 +114,11 @@ namespace neuro_app_bep
                     var processedImage = ProcessImage(bitmap, 28);
 
                     var output = _neuralNetwork.Forward(processedImage);
-                    var predictedDigit = Array.IndexOf(output, output.Max());
+                    var softmax = _neuralNetwork.Softmax(output);
+                    var predictedDigit = Array.IndexOf(softmax, softmax.Max());
 
-                    MessageBox.Show($"Распознанная цифра: {predictedDigit}\n" +
-                        $"Точность: {output[predictedDigit] * 100}%",
+                    MessageBox.Show($"Распознанная цифра: { predictedDigit }\n" +
+                        $"Точность: { softmax[predictedDigit] * 100 }%",
                         "Результат распознавания",
                         MessageBoxButton.OK, MessageBoxImage.Information);
                 }
@@ -107,6 +127,7 @@ namespace neuro_app_bep
                     MessageBox.Show($"Ошибка распознавания изображения: {ex.Message}",
                         "Ошибка",
                         MessageBoxButton.OK, MessageBoxImage.Error);
+                    _logger.Error($"Ошибка: {ex.Message}");
                 }
             }
         }
@@ -123,6 +144,7 @@ namespace neuro_app_bep
             {
                 try
                 {
+                    _logger.Info($"Загрузка модели из {openFileDialog.FileName}");
                     string json = File.ReadAllText(openFileDialog.FileName);
                     _neuralNetwork = JsonConvert.DeserializeObject<NeuralNetwork>(json);
 
@@ -134,6 +156,7 @@ namespace neuro_app_bep
                 {
                     MessageBox.Show($"Ошибка загрузки модели: {ex.Message}", "Ошибка",
                                   MessageBoxButton.OK, MessageBoxImage.Error);
+                    _logger.Error($"Ошибка: {ex.Message}");
                 }
             }
         }
@@ -157,6 +180,7 @@ namespace neuro_app_bep
             {
                 try
                 {
+                    _logger.Info($"Сохранение модели в {saveFileDialog.FileName}");
                     string json = JsonConvert.SerializeObject(_neuralNetwork);
                     File.WriteAllText(saveFileDialog.FileName, json);
 
@@ -167,77 +191,179 @@ namespace neuro_app_bep
                 {
                     MessageBox.Show($"Ошибка сохранения модели: {ex.Message}", "Ошибка",
                                   MessageBoxButton.OK, MessageBoxImage.Error);
+                    _logger.Error($"Ошибка: {ex.Message}");
                 }
             }
         }
 
-        private void TrainModel()
+        private async Task TrainModelAsync(CancellationToken ct)
         {
             try
             {
-                var trainData = MnistLoader.Load("train-images.idx3-ubyte", "train-labels.idx1-ubyte");
-                var testData = MnistLoader.Load("t10k-images.idx3-ubyte", "t10k-labels.idx1-ubyte");
+                var (trainData, testData) = await LoadDataAsync(ct);
 
+                InitializeModel();
+
+                // Конфигурация обучения
+                const int epochs = 10;
+                const int batchSize = 256;
+                var testSample = testData.Take(1000).ToArray();
+
+                // Основной цикл обучения
+                for (int epoch = 1; epoch <= epochs; epoch++)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    // Асинхронное обучение с параллельной обработкой
+                    var epochResult = await ProcessEpochAsync(
+                        trainData,
+                        epoch,
+                        epochs,
+                        batchSize,
+                        testSample,
+                        ct
+                    );
+
+                    // Обновление UI
+                    await UpdateTrainingProgressAsync(
+                        epochResult.Loss,
+                        epochResult.Accuracy,
+                        epoch,
+                        epochs
+                    );
+                }
+
+
+                _logger.Info("Обучение успешно завершено");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Error($"Ошибка обучения: {ex}");
+                await Dispatcher.InvokeAsync(() =>
+                    MessageBox.Show(ex.Message, "Ошибка"));
+            }
+        }
+
+        private async Task<(List<(double[], int)> train, List<(double[], int)> test)> LoadDataAsync(CancellationToken ct)
+        {
+            return await Task.Run(() =>
+            {
+                _logger.Info("Начало загрузки данных");
+
+                var train = MnistLoader.Load("train-images.idx3-ubyte",
+                    "train-labels.idx1-ubyte");
+                var test = MnistLoader.Load("t10k-images.idx3-ubyte",
+                    "t10k-labels.idx1-ubyte");
+
+                ct.ThrowIfCancellationRequested();
+                _logger.Info($"Данные загружены: {train.Count} train, {test.Count} test");
+
+                return (train, test);
+
+            }, ct);
+        }
+
+        private void InitializeModel()
+        {
+            Dispatcher.Invoke(() =>
+            {
                 if (_neuralNetwork == null)
                 {
                     _neuralNetwork = new NeuralNetwork();
-                    _neuralNetwork.Initialize(784, 128, 10, 0.01);
+                    _neuralNetwork.Initialize(784, 256, 10, 0.005);
+                    _logger.Info("Модель инициализирована");
                 }
+            });
+        }
 
-                int epochs = 10;
-                int batchSize = 32;
+        private async Task<EpochResult> ProcessEpochAsync(List<(double[], int)> trainData, int currentEpoch, int totalEpochs, int batchSize,
+            (double[], int)[] testSample, CancellationToken ct)
+        {
+            return await Task.Run(() =>
+            {
+                var epochWatch = Stopwatch.StartNew();
+                double totalLoss = 0;
+                var rnd = new Random(Guid.NewGuid().GetHashCode());
 
-                for (int epoch = 0; epoch < epochs; epoch++)
+                // Параллельное перемешивание данных
+                var shuffled = ParallelShuffle(trainData, rnd, ct);
+
+                // Параллельная обработка батчей
+                var batches = shuffled
+                    .Select((x, i) => new { Index = i, Value = x })
+                    .GroupBy(x => x.Index / batchSize)
+                    .Select(g => g.Select(x => x.Value).ToList())
+                    .ToList();
+
+                Parallel.ForEach(batches, new ParallelOptions
                 {
-                    double epochLoss = 0;
-                    var rnd = new Random();
-                    var shuffled = trainData.OrderBy(x => rnd.Next()).ToList();
+                    CancellationToken = ct,
+                    MaxDegreeOfParallelism = Environment.ProcessorCount
+                }, batch =>
+                {
+                    var batchLoss = ProcessBatch(batch, ct);
+                    Interlocked.Add(ref totalLoss, batchLoss);
+                });
 
-                    for (int i = 0; i < shuffled.Count; i += batchSize)
-                    {
-                        var batch = shuffled.Skip(i).Take(batchSize).ToList();
-                        double batchLoss = 0;
+                // Расчет точности
+                int correct = CalculateAccuracy(testSample);
+                double accuracy = (double)correct / testSample.Length * 100;
 
-                        foreach (var (input, label) in batch)
-                        {
-                            var output = _neuralNetwork.Forward(input);
-                            var target = new double[10];
-                            target[label] = 1.0;
-                            _neuralNetwork.Backward(input, target, batch.Count);
-                            batchLoss += _neuralNetwork.CalculateLoss(output, target);
-                        }
+                _logger.Info($"Эпоха {currentEpoch}/{totalEpochs} завершена за " +
+                           $"{epochWatch.Elapsed.TotalSeconds:F2} сек. " +
+                           $"Точность: {accuracy:F2}%");
 
-                        epochLoss += batchLoss / batch.Count;
-                    }
+                return new EpochResult(totalLoss / batches.Count, accuracy);
+            }, ct);
+        }
 
-                    // Тестирование
-                    int correct = 0;
-                    foreach (var (input, label) in testData.Take(1000))
-                    {
-                        var output = _neuralNetwork.Forward(input);
-                        if (output.ToList().IndexOf(output.Max()) == label)
-                            correct++;
-                    }
+        private List<T> ParallelShuffle<T>(IList<T> list, Random rnd, CancellationToken ct)
+        {
+            var indices = Enumerable.Range(0, list.Count).ToArray();
 
-                    double accuracy = correct / 10.0;
-                    _progress.Update(epochLoss / (trainData.Count / batchSize), accuracy);
-
-                    // Обновление UI
-                    Dispatcher.Invoke(() =>
-                    {
-                        AccuracyStatus.Content = $"Точность: {accuracy:F1}%";
-                        UpdatePlot();
-                    });
-                }
-            }
-            catch (FileNotFoundException ex)
+            Parallel.For(0, indices.Length, i =>
             {
-                MessageBox.Show("Скачайте датасет mnist и расположите вместе с исполняющим файлом");
-            }
-            catch (Exception ex)
+                int swapIndex = rnd.Next(i, indices.Length);
+                (indices[i], indices[swapIndex]) = (indices[swapIndex], indices[i]);
+                ct.ThrowIfCancellationRequested();
+            });
+
+            return indices.Select(i => list[i]).ToList();
+        }
+
+        private int CalculateAccuracy(IEnumerable<(double[] input, int label)> data)
+        {
+            var correct = new ConcurrentCounter();
+
+            Parallel.ForEach(data, item =>
             {
-                MessageBox.Show(ex.ToString());
-            }
+                var output = _neuralNetwork.Forward(item.input);
+                if (Array.IndexOf(output, output.Max()) == item.label)
+                    correct.Increment();
+            });
+
+            return correct.Value;
+        }
+
+        private async Task UpdateTrainingProgressAsync(
+            double loss,
+            double accuracy,
+            int currentEpoch,
+            int totalEpochs)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                // Обновление графика
+                _progress.Update(loss, accuracy);
+                UpdatePlot();
+
+                // Обновление прогресс-бара
+                TrainingProgress.Value = (double)currentEpoch / totalEpochs * 100;
+
+                // Обновление текстовых полей
+                ModelStatus.Content = $"Эпоха {currentEpoch} из {totalEpochs}";
+                AccuracyStatus.Content = $"Точность: {accuracy:F2}%";
+            });
         }
 
         private double[] ProcessImage(BitmapImage image, int resizeValue)
@@ -246,9 +372,11 @@ namespace neuro_app_bep
 
             using (var memoryStream = new MemoryStream())
             {
+                // Универсальная загрузка изображения
                 var encoder = new PngBitmapEncoder();
                 encoder.Frames.Add(BitmapFrame.Create(image));
                 encoder.Save(memoryStream);
+                memoryStream.Position = 0;
 
                 using (var bmp = new Bitmap(memoryStream))
                 using (var resized = new Bitmap(bmp, new System.Drawing.Size(resizeValue, resizeValue)))
@@ -258,13 +386,17 @@ namespace neuro_app_bep
                         for (int x = 0; x < resizeValue; x++)
                         {
                             var pixel = resized.GetPixel(x, y);
-                            greyPixels[y * resizeValue + x] = (byte)(0.299*pixel.R + 0.587*pixel.G + 0.114*pixel.B); // формула rgb to grayscale весовое среднее
+                            byte grayValue = (byte)(0.299 * pixel.R + 0.587 * pixel.G + 0.114 * pixel.B);
+                            greyPixels[y * resizeValue + x] = grayValue;
                         }
                     }
                 }
             }
 
-            return greyPixels.Select(x => 1.0 - (x / 255.0)).ToArray();
+            // Добавлена проверка необходимости инверсии
+            double average = greyPixels.Average(p => p);
+            bool shouldInvert = average > 128; // Если среднее значение яркое, инвертируем
+            return greyPixels.Select(p => (shouldInvert ? 255 - p : p) / 255.0).ToArray();
         }
 
         private void UpdatePlot()
@@ -282,6 +414,51 @@ namespace neuro_app_bep
             }
 
             _plotModel.InvalidatePlot(true);
+        }
+
+        private async Task UpdateUIAsync(double accuracy)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                AccuracyStatus.Content = $"Точность: {accuracy:F1}%";
+                UpdatePlot();
+            });
+        }
+
+        private double ProcessBatch(List<(double[] input, int label)> batch, CancellationToken ct)
+        {
+            var localGradients = new Dictionary<int, double[]>();
+            var batchLoss = 0.0;
+
+            Parallel.ForEach(batch, () => new {
+                Loss = 0.0,
+                Gradients = new Dictionary<int, double[]>()
+            }, (item, state, local) =>
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var (input, label) = item;
+                var target = _neuralNetwork.CreateTarget(label);
+
+                var output = _neuralNetwork.Forward(input);
+                var gradients = _neuralNetwork.Backward(input, target);
+
+                local.Loss += _neuralNetwork.CalculateLoss(output, target);
+                UpdateLocalGradients(local.Gradients, gradients);
+
+                return local;
+            },
+            local =>
+            {
+                lock (_syncLock)
+                {
+                    batchLoss += local.Loss;
+                    _neuralNetwork.MergeGradients(local.Gradients);
+                }
+            });
+
+            _neuralNetwork.ApplyGradients();
+            return batchLoss;
         }
     }
 }

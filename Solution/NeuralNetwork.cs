@@ -20,6 +20,10 @@ namespace neuro_app_bep
         public double[] _hiddenOutput;
         [JsonIgnore]
         public double[] _outputInput;
+        [JsonIgnore]
+        public double[,] weights1Grad;
+        [JsonIgnore]
+        public double[,] weights2Grad;
 
         public void Initialize(int inputSize, int hiddenSize, int outputSize, double learningRate)
         {
@@ -110,12 +114,11 @@ namespace neuro_app_bep
                 _biases1[i] -= _learningRate * hiddenGradient[i];
         }
 
-        private double[] Softmax(double[] x)
+        public double[] Softmax(double[] input)
         {
-            var max = x.Max();
-            var exp = x.Select(xi => Math.Exp(xi - max)).ToArray();
+            var exp = input.Select(x => Math.Exp(x - input.Max())).ToArray();
             var sum = exp.Sum();
-            return exp.Select(xi => xi / sum).ToArray();
+            return exp.Select(x => x / sum).ToArray();
         }
 
         public double CalculateLoss(double[] output, double[] target)
@@ -125,6 +128,25 @@ namespace neuro_app_bep
                 loss += -target[i] * Math.Log(output[i] + 1e-10);
 
             return loss;
+        }
+
+        public double[] CreateTarget(int label)
+        {
+            var target = new double[10]; // выходные данные 0-9 в сумме 10
+            target[label] = 1.0;
+            return target;
+        }
+
+        public void MergeGradients(Dictionary<int, double[]> localGradients)
+        {
+            // Реализация объединения градиентов
+            foreach (var key in localGradients.Keys)
+            {
+                for (int i = 0; i < localGradients[key].Length; i++)
+                {
+                    weights1Grad[key / _hiddenSize, key % _hiddenSize] += localGradients[key][i];
+                }
+            }
         }
     }
 }
