@@ -87,10 +87,27 @@ namespace neuro_app_bep
 
             if (openFileDialog.ShowDialog() == true)
             {
-                var bitmap = new BitmapImage(new Uri(openFileDialog.FileName));
-                PickedImage.Source = bitmap;
+                try
+                {
+                    var bitmap = new BitmapImage(new Uri(openFileDialog.FileName));
+                    PickedImage.Source = bitmap;
 
-                var processedImage = ProcessImage(bitmap, 28);
+                    var processedImage = ProcessImage(bitmap, 28);
+
+                    var output = _neuralNetwork.Forward(processedImage);
+                    var predictedDigit = Array.IndexOf(output, output.Max());
+
+                    MessageBox.Show($"Распознанная цифра: {predictedDigit}\n" +
+                        $"Точность: {output[predictedDigit] * 100}%",
+                        "Результат распознавания",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Ошибка распознавания изображения: {ex.Message}",
+                        "Ошибка",
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                }
             }
         }
 
