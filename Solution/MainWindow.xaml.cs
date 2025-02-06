@@ -107,6 +107,7 @@ namespace neuro_app_bep
             }
             finally
             {
+                StatusLabel.Content = "Обучение завершено";
                 StartButton.IsEnabled = true;
                 CancelButton.IsEnabled = false;
             }
@@ -231,7 +232,7 @@ namespace neuro_app_bep
                 InitializeModel(learningRate);
                 _logger.Info("Модель инициализирована");
 
-                for (int epoch = 0; epoch < epochs; epoch++)
+                for (int epoch = 1; epoch <= epochs; epoch++)
                 {
                     _trainingTimer.Restart();
                     ct.ThrowIfCancellationRequested();
@@ -266,7 +267,6 @@ namespace neuro_app_bep
                     Thread.Sleep(100); // Имитация задержки
                 }
                 _progressQueue.CompleteAdding();
-                StatusLabel.Content = "Обучение завершено";
                 _logger.Info("Обучение успешно завершено");
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
