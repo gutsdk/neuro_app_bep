@@ -302,7 +302,7 @@ namespace neuro_app_bep
                 }, batch =>
                 {
                     var batchLoss = ProcessBatch(batch, ct);
-                    Interlocked.Add(ref totalLoss, batchLoss);
+                    Add(ref totalLoss, batchLoss);
                 });
 
                 // Расчет точности
@@ -315,6 +315,19 @@ namespace neuro_app_bep
 
                 return new EpochResult(totalLoss / batches.Count, accuracy);
             }, ct);
+        }
+
+        public static double Add(ref double location1, double value)
+        {
+            double newCurrentValue = location1; // non-volatile read, so may be stale
+            while (true)
+            {
+                double currentValue = newCurrentValue;
+                double newValue = currentValue + value;
+                newCurrentValue = Interlocked.CompareExchange(ref location1, newValue, currentValue);
+                if (newCurrentValue.Equals(currentValue)) 
+                    return newValue;
+            }
         }
 
         private List<T> ParallelShuffle<T>(IList<T> list, Random rnd, CancellationToken ct)
@@ -416,49 +429,68 @@ namespace neuro_app_bep
             _plotModel.InvalidatePlot(true);
         }
 
-        private async Task UpdateUIAsync(double accuracy)
-        {
-            await Dispatcher.InvokeAsync(() =>
-            {
-                AccuracyStatus.Content = $"Точность: {accuracy:F1}%";
-                UpdatePlot();
-            });
-        }
-
         private double ProcessBatch(List<(double[] input, int label)> batch, CancellationToken ct)
         {
-            var localGradients = new Dictionary<int, double[]>();
-            var batchLoss = 0.0;
+            var accumulatedGradients = new Gradients
+            {
+                Weights1 = new double[_neuralNetwork.InputSize, _neuralNetwork.HiddenSize],
+                Weights2 = new double[_neuralNetwork.HiddenSize, _neuralNetwork.OutputSize],
+                Biases1 = new double[_neuralNetwork.HiddenSize],
+                Biases2 = new double[_neuralNetwork.OutputSize]
+            };
 
-            Parallel.ForEach(batch, () => new {
-                Loss = 0.0,
-                Gradients = new Dictionary<int, double[]>()
-            }, (item, state, local) =>
+            double batchLoss = 0;
+
+            Parallel.ForEach(batch, item =>
             {
                 ct.ThrowIfCancellationRequested();
 
                 var (input, label) = item;
                 var target = _neuralNetwork.CreateTarget(label);
-
                 var output = _neuralNetwork.Forward(input);
-                var gradients = _neuralNetwork.Backward(input, target);
+                var gradients = _neuralNetwork.Backward(input, target, batch.Count);
 
-                local.Loss += _neuralNetwork.CalculateLoss(output, target);
-                UpdateLocalGradients(local.Gradients, gradients);
-
-                return local;
-            },
-            local =>
-            {
-                lock (_syncLock)
+                // Накопление градиентов
+                for (int i = 0; i < _neuralNetwork.InputSize; i++)
                 {
-                    batchLoss += local.Loss;
-                    _neuralNetwork.MergeGradients(local.Gradients);
+                    for (int j = 0; j < _neuralNetwork.HiddenSize; j++)
+                    {
+                        accumulatedGradients.Weights1[i, j] += gradients.Weights1[i, j];
+                    }
                 }
+
+                for (int i = 0; i < _neuralNetwork.HiddenSize; i++)
+                {
+                    for (int j = 0; j < _neuralNetwork.OutputSize; j++)
+                    {
+                        accumulatedGradients.Weights2[i, j] += gradients.Weights2[i, j];
+                    }
+                }
+
+                for (int i = 0; i < _neuralNetwork.HiddenSize; i++)
+                {
+                    accumulatedGradients.Biases1[i] += gradients.Biases1[i];
+                }
+
+                for (int i = 0; i < _neuralNetwork.OutputSize; i++)
+                {
+                    accumulatedGradients.Biases2[i] += gradients.Biases2[i];
+                }
+
+                batchLoss += _neuralNetwork.CalculateLoss(output, target);
             });
 
-            _neuralNetwork.ApplyGradients();
-            return batchLoss;
+            // Применение градиентов
+            _neuralNetwork.ApplyGradients(accumulatedGradients);
+            return batchLoss / batch.Count;
+        }
+
+        private void UpdateStatus(string message)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                ModelStatus.Content = message;
+            });
         }
     }
 }
