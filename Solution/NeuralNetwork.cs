@@ -1,7 +1,5 @@
 ﻿using Newtonsoft.Json;
-using System;
-using System.Collections.Generic;
-using System.Linq;
+using MathNet.Numerics.LinearAlgebra;
 
 namespace neuro_app_bep
 {
@@ -21,215 +19,101 @@ namespace neuro_app_bep
         public double LearningRate { get; set; }
 
         [JsonProperty]
-        public double[,] Weights1 { get; private set; }
+        public Matrix<double> Weights1 { get; private set; }
 
         [JsonProperty]
-        public double[,] Weights2 { get; private set; }
+        public Matrix<double> Weights2 { get; private set; }
 
         [JsonProperty]
-        public double[] Biases1 { get; private set; }
+        public Vector<double> Biases1 { get; private set; }
 
         [JsonProperty]
-        public double[] Biases2 { get; private set; }
+        public Vector<double> Biases2 { get; private set; }
 
         [JsonIgnore]
-        private double[] _hiddenInput;
-
-        [JsonIgnore]
-        private double[] _hiddenOutput;
-
-        [JsonIgnore]
-        private double[] _outputInput;
-
-        [JsonIgnore]
-        private double[,] _weights1Grad;
-
-        [JsonIgnore]
-        private double[,] _weights2Grad;
-
-        public NeuralNetwork() { }
+        private Matrix<double> _A1;
 
         public NeuralNetwork(int inputSize, int hiddenSize, int outputSize, double learningRate)
-        {
-            Initialize(inputSize, hiddenSize, outputSize, learningRate);
-        }
-
-        public void Initialize(int inputSize, int hiddenSize, int outputSize, double learningRate)
         {
             InputSize = inputSize;
             HiddenSize = hiddenSize;
             OutputSize = outputSize;
             LearningRate = learningRate;
 
+
+            InitializeWeights();
+        }
+
+        private void InitializeWeights()
+        {
             var rnd = new Random();
-            InitializeWeights(rnd);
-            InitializeGradients();
+
+            // Инициализация для ReLU
+            Weights1 = Matrix<double>.Build.Random(InputSize, HiddenSize,
+                new MathNet.Numerics.Distributions.Normal(0, Math.Sqrt(2.0 / InputSize)));
+
+            Biases1 = Vector<double>.Build.Dense(HiddenSize);
+
+            // Инициализация для выходного слоя
+            Weights2 = Matrix<double>.Build.Random(HiddenSize, OutputSize,
+                new MathNet.Numerics.Distributions.Normal(0, Math.Sqrt(1.0 / HiddenSize)));
+
+            Biases2 = Vector<double>.Build.Dense(OutputSize);
         }
 
-        private void InitializeWeights(Random rnd)
+        public Matrix<double> Forward(Matrix<double> X)
         {
-            Weights1 = new double[InputSize, HiddenSize];
-            Biases1 = new double[HiddenSize];
-            for (int i = 0; i < HiddenSize; i++)
-            {
-                Biases1[i] = rnd.NextDouble() - 0.5;
-                for (int j = 0; j < InputSize; j++)
-                {
-                    Weights1[j, i] = rnd.NextDouble() - 0.5;
-                }
-            }
+            var Z1 = X * Weights1;
+            for (int i = 0; i < Z1.RowCount; i++)
+                Z1.SetRow(i, Z1.Row(i) + Biases1);
 
-            Weights2 = new double[HiddenSize, OutputSize];
-            Biases2 = new double[OutputSize];
-            for (int i = 0; i < OutputSize; i++)
-            {
-                Biases2[i] = rnd.NextDouble() - 0.5;
-                for (int j = 0; j < HiddenSize; j++)
-                {
-                    Weights2[j, i] = rnd.NextDouble() - 0.5;
-                }
-            }
+            _A1 = Z1.Map(ReLU);
+            var Z2 = _A1 * Weights2;
+
+            for (int i = 0; i < Z2.RowCount; i++)
+                Z2.SetRow(i, Z2.Row(i) + Biases2);
+
+            return Softmax(Z2);
         }
 
-        private void InitializeGradients()
+        public void Backward(Matrix<double> X, Matrix<double> Y, Matrix<double> output)
         {
-            _weights1Grad = new double[InputSize, HiddenSize];
-            _weights2Grad = new double[HiddenSize, OutputSize];
+            var batchSize = X.RowCount;
+
+            var dZ2 = output - Y;
+            var dW2 = (_A1.Transpose() * dZ2) / batchSize;
+            var dB2 = dZ2.ColumnSums() / batchSize;
+
+            var dZ1 = (dZ2 * Weights2.Transpose()).PointwiseMultiply(_A1.Map(ReLUDerivative));
+            var dW1 = (X.Transpose() * dZ1) / batchSize;
+            var dB1 = dZ1.ColumnSums() / batchSize;
+
+            Weights2 -= LearningRate * dW2;
+            Weights1 -= LearningRate * dW1;
+            Biases2 -= LearningRate * dB2;
+            Biases1 -= LearningRate * dB1;
         }
 
-        public double[] Forward(double[] input)
+        public Matrix<double> Softmax(Matrix<double> input)
         {
-            _hiddenInput = new double[HiddenSize];
-            _hiddenOutput = new double[HiddenSize];
-
-            for (int i = 0; i < HiddenSize; i++)
-            {
-                _hiddenInput[i] = Biases1[i];
-                for (int j = 0; j < InputSize; j++)
-                    _hiddenInput[i] += input[j] * Weights1[j, i];
-
-                _hiddenOutput[i] = Math.Max(0, _hiddenInput[i]); // ReLU
-            }
-
-            _outputInput = new double[OutputSize];
-            for (int i = 0; i < OutputSize; i++)
-            {
-                _outputInput[i] = Biases2[i];
-                for (int j = 0; j < HiddenSize; j++)
-                    _outputInput[i] += _hiddenOutput[j] * Weights2[j, i];
-            }
-
-            return Softmax(_outputInput);
+            var exp = input.PointwiseExp();
+            var sum = exp.RowSums();
+            return exp.MapIndexed((i, j, v) => v / sum[i]);
         }
 
-        public Gradients Backward(double[] input, double[] target, int batchSize)
+        private double ReLU(double x) => Math.Max(0, x);
+        private double ReLUDerivative(double x) => x > 0 ? 1 : 0;
+
+        public (int digit, double confidence) Predict(double[] input)
         {
-            var outputGradient = _outputInput.Select((oi, i) => (oi - target[i]) / batchSize).ToArray();
+            var inputMatrix = Matrix<double>.Build.DenseOfRowArrays(input);
+            var output = Forward(inputMatrix); // Прогоняем через сеть
 
-            // Градиенты для weights2 и biases2
-            var weights2Grad = new double[HiddenSize, OutputSize];
-            var biases2Grad = new double[OutputSize];
+            // Получаем индекс максимального значения (это предсказанная цифра)
+            int predictedDigit = output.Row(0).MaximumIndex();
+            double confidence = output[0, predictedDigit]; // Вероятность
 
-            for (int i = 0; i < HiddenSize; i++)
-            {
-                for (int j = 0; j < OutputSize; j++)
-                {
-                    weights2Grad[i, j] = outputGradient[j] * _hiddenOutput[i];
-                }
-            }
-
-            for (int i = 0; i < OutputSize; i++)
-            {
-                biases2Grad[i] = outputGradient[i];
-            }
-
-            // Градиенты для weights1 и biases1
-            var hiddenGradient = new double[HiddenSize];
-            for (int i = 0; i < HiddenSize; i++)
-            {
-                var error = 0.0;
-                for (int j = 0; j < OutputSize; j++)
-                {
-                    error += outputGradient[j] * Weights2[i, j];
-                }
-                hiddenGradient[i] = error * (_hiddenInput[i] > 0 ? 1 : 0);
-            }
-
-            var weights1Grad = new double[InputSize, HiddenSize];
-            var biases1Grad = new double[HiddenSize];
-
-            for (int i = 0; i < InputSize; i++)
-            {
-                for (int j = 0; j < HiddenSize; j++)
-                {
-                    weights1Grad[i, j] = hiddenGradient[j] * input[i];
-                }
-            }
-
-            for (int i = 0; i < HiddenSize; i++)
-            {
-                biases1Grad[i] = hiddenGradient[i];
-            }
-
-            return new Gradients
-            {
-                Weights1 = weights1Grad,
-                Weights2 = weights2Grad,
-                Biases1 = biases1Grad,
-                Biases2 = biases2Grad
-            };
-        }
-
-        public void ApplyGradients(Gradients gradients)
-        {
-            for (int i = 0; i < InputSize; i++)
-            {
-                for (int j = 0; j < HiddenSize; j++)
-                {
-                    Weights1[i, j] -= LearningRate * gradients.Weights1[i, j];
-                }
-            }
-
-            for (int i = 0; i < HiddenSize; i++)
-            {
-                for (int j = 0; j < OutputSize; j++)
-                {
-                    Weights2[i, j] -= LearningRate * gradients.Weights2[i, j];
-                }
-            }
-
-            for (int i = 0; i < HiddenSize; i++)
-            {
-                Biases1[i] -= LearningRate * gradients.Biases1[i];
-            }
-
-            for (int i = 0; i < OutputSize; i++)
-            {
-                Biases2[i] -= LearningRate * gradients.Biases2[i];
-            }
-        }
-
-        public double[] Softmax(double[] input)
-        {
-            var exp = input.Select(x => Math.Exp(x - input.Max())).ToArray();
-            var sum = exp.Sum();
-            return exp.Select(x => x / sum).ToArray();
-        }
-
-        public double CalculateLoss(double[] output, double[] target)
-        {
-            double loss = 0;
-            for (int i = 0; i < output.Length; i++)
-                loss += -target[i] * Math.Log(output[i] + 1e-10);
-
-            return loss;
-        }
-
-        public double[] CreateTarget(int label)
-        {
-            var target = new double[OutputSize];
-            target[label] = 1.0;
-            return target;
+            return (predictedDigit, confidence);
         }
     }
 }

@@ -10,15 +10,15 @@
     <Canvas>
         <Label Content="Попытка в нейросети #1?" FontSize="20" Height="30" Width="200" Canvas.Left="20" Canvas.Top="10"/>
         <Label Content="Выбранное изображение" FontSize="20" Height="30" Width="200" Canvas.Left="79" Canvas.Top="544"/>
-        <Label Content="График сходимости" FontSize="20" Height="30" Width="150" Canvas.Left="540" Canvas.Top="544"/>
-        <Label x:Name="ModelStatus" FontSize="20" Canvas.Left="20" Canvas.Top="56"/>
-        <Label x:Name="AccuracyStatus" FontSize="20" Canvas.Left="20" Canvas.Top="105"/>
+        <Label Content="График сходимости" FontSize="20" Height="30" Width="150" Canvas.Left="504" Canvas.Top="544" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+        <Label x:Name="StatsLabel" FontSize="20" Canvas.Left="20" Canvas.Top="56"/>
+        <Label x:Name="StatusLabel" FontSize="20" Canvas.Left="20" Canvas.Top="105"/>
         <Image x:Name="PickedImage"  Height="300" Width="300" Canvas.Left="29" Canvas.Top="231"/>
-        <oxy:PlotView x:Name="Chart" Width="300" Height="300" Canvas.Left="465" Canvas.Top="231"/>
-        <ProgressBar x:Name="TrainingProgress" Minimum="0" Maximum="100" Height="20" Width="300" Canvas.Left="465" Canvas.Top="105"/>
-        <Button x:Name="LoadModel" Content="Загрузить модель" Click="LoadModel_Click" Width="150" Height="30" FontSize="20" Canvas.Left="20" Canvas.Top="153" HorizontalAlignment="Left" VerticalAlignment="Center"/>
-        <Button x:Name="SaveModel" Content="Сохранить модель" Click="SaveModel_Click" Width="150" Height="30" FontSize="20" Canvas.Left="218" Canvas.Top="153" HorizontalAlignment="Left" VerticalAlignment="Center"/>
-        <Button x:Name="PickImage" Content="Выбрать изображение" Click="PickImage_Click" Width="180" Height="30" FontSize="20" Canvas.Left="415" Canvas.Top="153" HorizontalAlignment="Left" VerticalAlignment="Center"/>
-        <Button x:Name="Start" Content="Начать" Click="Start_Click" Width="150" Height="30" FontSize="20" Canvas.Left="630" Canvas.Top="153" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+        <oxy:PlotView x:Name="Chart" Width="300" Height="300" Canvas.Left="429" Canvas.Top="231" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+        <Button x:Name="LoadModelButton" Content="Загрузить модель" Click="LoadModelButton_Click" Width="150" Height="30" FontSize="20" Canvas.Left="400" Canvas.Top="110" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+        <Button x:Name="SaveModelButton" Content="Сохранить модель" Click="SaveModelButton_Click" Width="150" Height="30" FontSize="20" Canvas.Left="400" Canvas.Top="153" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+        <Button x:Name="PickImageButton" Content="Выбрать изображение" Click="PickImageButton_Click" Width="180" Height="30" FontSize="20" Canvas.Left="89" Canvas.Top="153" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+        <Button x:Name="StartButton" Content="Начать" Click="StartButton_Click" Width="150" Height="30" FontSize="20" Canvas.Left="606" Canvas.Top="110" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+        <Button x:Name="CancelButton" Content="Отмена" Click="CancelButton_Click" Width="150" Height="30" FontSize="20" Canvas.Left="606" Canvas.Top="153" HorizontalAlignment="Left" VerticalAlignment="Center"/>
     </Canvas>
 </Window>
