@@ -7,28 +7,28 @@ namespace neuro_app_bep
     public class NeuralNetwork
     {
         [JsonProperty]
-        public int InputSize { get; private set; }
+        public int InputSize { get; set; }
 
         [JsonProperty]
-        public int HiddenSize { get; private set; }
+        public int HiddenSize { get; set; }
 
         [JsonProperty]
-        public int OutputSize { get; private set; }
+        public int OutputSize { get; set; }
 
         [JsonProperty]
         public double LearningRate { get; set; }
 
         [JsonProperty]
-        public Matrix<double> Weights1 { get; private set; }
+        public Matrix<double> Weights1 { get; set; }
 
         [JsonProperty]
-        public Matrix<double> Weights2 { get; private set; }
+        public Matrix<double> Weights2 { get; set; }
 
         [JsonProperty]
-        public Vector<double> Biases1 { get; private set; }
+        public Vector<double> Biases1 { get; set; }
 
         [JsonProperty]
-        public Vector<double> Biases2 { get; private set; }
+        public Vector<double> Biases2 { get; set; }
 
         [JsonIgnore]
         private Matrix<double> _A1;

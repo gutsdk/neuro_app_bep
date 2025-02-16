@@ -207,7 +207,12 @@ namespace neuro_app_bep
                 try
                 {
                     _logger.Info($"Сохранение модели в {saveFileDialog.FileName}");
-                    string json = JsonConvert.SerializeObject(_neuralNetwork);
+
+                    var settings = new JsonSerializerSettings();
+                    settings.Converters.Add(new MatrixConverter());
+                    settings.Converters.Add(new VectorConverter());
+
+                    string json = JsonConvert.SerializeObject(_neuralNetwork, Formatting.Indented, settings);
                     File.WriteAllText(saveFileDialog.FileName, json);
 
                     StatusLabel.Content = "Модель сохранена";
