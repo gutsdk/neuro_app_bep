@@ -96,7 +96,10 @@ namespace neuro_app_bep
 
         public Matrix<double> Softmax(Matrix<double> input)
         {
-            var exp = input.PointwiseExp();
+            var maxPerRow = Vector<double>.Build.Dense(input.RowCount, i => input.Row(i).AbsoluteMaximum());
+            var stabilized = input - Matrix<double>.Build.Dense(input.RowCount, input.ColumnCount, (i, j) => maxPerRow[i]);
+
+            var exp = stabilized.PointwiseExp();
             var sum = exp.RowSums();
             return exp.MapIndexed((i, j, v) => v / sum[i]);
         }

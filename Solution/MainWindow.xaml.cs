@@ -13,6 +13,7 @@ using System.Drawing.Drawing2D;
 using MathNet.Numerics.LinearAlgebra;
 using System.Globalization;
 using System.Collections.Concurrent;
+using System.Drawing.Imaging;
 
 namespace neuro_app_bep
 {
@@ -166,7 +167,12 @@ namespace neuro_app_bep
                 {
                     _logger.Info($"Загрузка модели из {openFileDialog.FileName}");
                     string json = File.ReadAllText(openFileDialog.FileName);
-                    _neuralNetwork = JsonConvert.DeserializeObject<NeuralNetwork>(json);
+
+                    var settings = new JsonSerializerSettings();
+                    settings.Converters.Add(new MatrixConverter());
+                    settings.Converters.Add(new VectorConverter());
+
+                    _neuralNetwork = JsonConvert.DeserializeObject<NeuralNetwork>(json, settings);
 
                     StatusLabel.Content = "Модель загружена";
                     MessageBox.Show("Модель успешно загружена!", "Успех",
@@ -264,7 +270,7 @@ namespace neuro_app_bep
                         Accuracy = accuracy
                     });
 
-                    Thread.Sleep(100); // Имитация задержки
+                    await Task.Delay(100, ct); // Имитация задержки
                 }
                 _progressQueue.CompleteAdding();
                 _logger.Info("Обучение успешно завершено");
@@ -365,30 +371,50 @@ namespace neuro_app_bep
                 using (var bmp = new Bitmap(memoryStream))
                 using (var resized = new Bitmap(bmp, new System.Drawing.Size(resizeValue, resizeValue)))
                 {
-                    byte[] greyPixels = new byte[resizeValue * resizeValue];
+                    var rect = new Rectangle(0, 0, resizeValue, resizeValue);
+                    // Захватываем данные изображения в формате 24bppRgb
+                    var bmpData = resized.LockBits(rect, ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+
+                    int stride = bmpData.Stride;
+                    int bytesCount = stride * resizeValue;
+                    byte[] rgbValues = new byte[bytesCount];
+
+                    System.Runtime.InteropServices.Marshal.Copy(bmpData.Scan0, rgbValues, 0, bytesCount);
+
+                    resized.UnlockBits(bmpData);
+
+                    double sum = 0;
 
                     for (int y = 0; y < resizeValue; y++)
                     {
                         for (int x = 0; x < resizeValue; x++)
                         {
-                            var pixel = resized.GetPixel(x, y);
-                            byte grayValue = (byte)(0.299 * pixel.R + 0.587 * pixel.G + 0.114 * pixel.B);
-                            greyPixels[y * resizeValue + x] = grayValue;
+                            int index = y * stride + x * 3;
+                            byte blue = rgbValues[index];
+                            byte green = rgbValues[index + 1];
+                            byte red = rgbValues[index + 2];
+
+                            byte gray = (byte)(0.299 * red + 0.587 * green + 0.114 * blue);
+                            pixels[y * resizeValue + x] = gray;
+                            sum += gray;
                         }
                     }
 
-                    // Определяем, нужно ли инвертировать изображение
-                    double average = greyPixels.Average(p => p);
-                    bool shouldInvert = average > 128;
+                    double avg = sum / (resizeValue * resizeValue);
 
-                    // Заполняем массив нормализованными значениями (0.0 - 1.0)
-                    for (int i = 0; i < greyPixels.Length; i++)
+                    // Нормализация
+                    if (avg > 128)
                     {
-                        pixels[i] = (shouldInvert ? 255 - greyPixels[i] : greyPixels[i]) / 255.0;
+                        for (int i = 0; i < pixels.Length; i++)
+                            pixels[i] = (255 - pixels[i]) / 255.0;
+                    }
+                    else
+                    {
+                        for (int i = 0; i < pixels.Length; i++)
+                            pixels[i] = pixels[i] / 255.0;
                     }
                 }
             }
-
             return pixels;
         }
     }
